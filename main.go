@@ -8,10 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -80,9 +80,10 @@ func main() {
 	errCh := make(chan error, 1)
 
 	// Walk through files and process them in parallel
-	err = filepath.Walk(*directory, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.Walk(*directory, func(path string, info fs.FileInfo, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			log.Printf("Error accessing %s: %v", path, walkErr)
+			return nil // Continue processing other files
 		}
 		if !info.Mode().IsRegular() {
 			return nil
@@ -98,38 +99,67 @@ func main() {
 			log.Printf("Processing: %s", path)
 			hash, size, status, err := processFile(path, db)
 			if err != nil {
-				select {
-				case errCh <- err:
-				default:
+				log.Printf("Skipping file %s due to error: %v", path, err)
+				if writeErr := writer.Write([]string{path, "", "-1", fmt.Sprintf("error: %v", err)}); writeErr != nil {
+					log.Printf("Failed to write error to CSV for file %s: %v", path, writeErr)
 				}
 				return
 			}
-			if writeErr := writer.Write([]string{path, hash, strconv.FormatInt(size, 10), status}); writeErr != nil {
-				select {
-				case errCh <- writeErr:
-				default:
-				}
+			if writeErr := writer.Write([]string{path, hash, fmt.Sprintf("%d", size), status}); writeErr != nil {
+				log.Printf("Failed to write result to CSV for file %s: %v", path, writeErr)
 			}
 		}(path)
 		return nil
 	})
-	if err != nil {
-		log.Fatalf("Error walking through files: %v", err)
+	if !info.Mode().IsRegular() {
+		return nil
 	}
 
-	wg.Wait()
-	close(errCh)
-	if len(errCh) > 0 {
-		log.Fatalf("Error processing files: %v", <-errCh)
-	}
+	sem <- struct{}{}
+	wg.Add(1)
+	go func(path string) {
+		defer func() {
+			<-sem
+			wg.Done()
+		}()
+		log.Printf("Processing: %s", path)
+		_, _, _, err := processFile(path, db)
+		if err != nil {
+			log.Printf("Skipping file %s due to error: %v", path, err)
+			if writeErr := writer.Write([]string{path, "", "-1", fmt.Sprintf("error: %v", err)}); writeErr != nil {
+				log.Printf("Failed to write error to CSV for file %s: %v", path, writeErr)
+			}
+			return
+		}
+	}(path)
 
-	log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
+	if writeErr := writer.Write([]string{path}); writeErr != nil {
+		select {
+		case errCh <- writeErr:
+			return writeErr
+		default:
+		}
+	}
+	return nil
+})
+
+if err != nil {
+log.Printf("Error walking through files: %v", err)
+}
+
+close(errCh)
+if len(errCh) > 0 {
+log.Printf("Error processing files: %v", <-errCh)
+}
+
+log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
 }
 
 func processFile(path string, db *sql.DB) (string, int64, string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", -1, "", err
+		log.Printf("Error reading file %s: %v", path, err)
+		return "", -1, fmt.Sprintf("error: %v", err), nil
 	}
 	defer file.Close()
 
