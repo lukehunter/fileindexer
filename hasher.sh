@@ -84,7 +84,7 @@ EOF
     else
         # Parse the database result
         db_hash=$(echo "$result" | awk '{print $1}')
-        db_size=$(echo "$result" | awk '{print $2}')
+        db_size=$(echo "$result" | awk '{print $3}')
 
         echo "result: $result"
         echo "DB size: $db_size"
