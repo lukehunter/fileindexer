@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -28,23 +29,27 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 `
 
 func main() {
-	if len(os.Args) < 3 {
-		log.Fatalf("Usage: %s <target_directory> <postgres_db_name> [output_file]", os.Args[0])
+	directory := flag.String("directory", "", "Target directory to process")
+	dbName := flag.String("dbname", "", "PostgreSQL database name")
+	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "PostgreSQL user")
+	dbHost := flag.String("dbhost", os.Getenv("DB_HOST"), "PostgreSQL host")
+	dbPort := flag.String("dbport", os.Getenv("DB_PORT"), "PostgreSQL port")
+	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "Output CSV file")
+	flag.Parse()
+
+	if *directory == "" || *dbName == "" {
+		log.Fatalf("Usage: --directory <target_directory> --dbname <postgres_db_name> [--dbuser <user>] [--dbhost <host>] [--dbport <port>] [--output <output_file>]")
 	}
 
-	directory := os.Args[1]
-	dbName := os.Args[2]
-	outputFile := fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000"))
-	if len(os.Args) > 3 {
-		outputFile = os.Args[3]
-	}
-
-	// Open database connection
-	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", dbHost, dbPort, dbUser, dbPassword, dbName)
+	if dbPassword == "" {
+		fmt.Print("Enter database password: ")
+		var inputPassword string
+		fmt.Scanln(&inputPassword)
+		dbPassword = inputPassword
+	}
+
+	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", *dbHost, *dbPort, *dbUser, dbPassword, *dbName)
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -57,7 +62,7 @@ func main() {
 	}
 
 	// Open output CSV file
-	file, err := os.Create(outputFile)
+	file, err := os.Create(*outputFile)
 	if err != nil {
 		log.Fatalf("Failed to create output file: %v", err)
 	}
@@ -75,7 +80,7 @@ func main() {
 	errCh := make(chan error, 1)
 
 	// Walk through files and process them in parallel
-	err = filepath.Walk(directory, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.Walk(*directory, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -118,7 +123,7 @@ func main() {
 		log.Fatalf("Error processing files: %v", <-errCh)
 	}
 
-	log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", outputFile)
+	log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
 }
 
 func processFile(path string, db *sql.DB) (string, int64, string, error) {
@@ -141,7 +146,14 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Insert new record
-			_, err = db.Exec("INSERT INTO file_hashes (filepath, hash, size) VALUES ($1, $2, $3)", path, hash, size)
+			for {
+				_, err = db.Exec("INSERT INTO file_hashes (filepath, hash, size) VALUES ($1, $2, $3)", path, hash, size)
+				if err == nil {
+					break
+				}
+				log.Printf("Retrying INSERT for %s due to error: %v", path, err)
+				time.Sleep(1 * time.Second)
+			}
 			if err != nil {
 				return "", -1, "", err
 			}
@@ -152,7 +164,14 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 
 	if size != dbSize {
 		// Update record
-		_, err = db.Exec("UPDATE file_hashes SET hash = $1, size = $2 WHERE filepath = $3", hash, size, path)
+		for {
+			_, err = db.Exec("UPDATE file_hashes SET hash = $1, size = $2 WHERE filepath = $3", hash, size, path)
+			if err == nil {
+				break
+			}
+			log.Printf("Retrying UPDATE for %s due to error: %v", path, err)
+			time.Sleep(1 * time.Second)
+		}
 		if err != nil {
 			return "", -1, "", err
 		}
