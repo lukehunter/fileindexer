@@ -57,7 +57,7 @@ process_file() {
     echo "Processing: $file"
 
     # Get the file size on disk
-    current_size=$(stat --format="%s" "$file")
+    current_size=$(stat --format="%s" "$file" 2>/dev/null || echo -1)
 
     # Calculate the SHA256 hash
     hash=$(sha256sum "$file" | awk '{print $1}')
@@ -75,7 +75,7 @@ process_file() {
 INSERT INTO file_hashes (filepath, hash, size) VALUES ('$file', '$hash', $current_size);
 EOF
         then
-            echo "Error: Failed to insert record for file $file. Exit code: $?"
+            echo "psql Exit code: $? $file"
             return
         fi
         echo "$file,$hash,$current_size,new" >> "$output_file"
