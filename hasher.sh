@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Check if psql and parallel are installed
-if ! command -v psql &> /dev/null || ! command -v parallel &> /dev/null; then
-    echo "Error: psql and/or parallel are not installed. Please install them and try again." 
+# Check if psql is installed
+if ! command -v psql &> /dev/null; then
+    echo "Error: psql is not installed. Please install it and try again." 
     exit 1
 fi
 
@@ -53,11 +53,11 @@ process_file() {
     db_name="$2"
     output_file="$3"
 
-    # Log the file path being processed
+    # Static progress counter
     echo "Processing: $file"
 
     # Get the file size on disk
-    current_size=$(stat --format="%s" "$file" 2>/dev/null || echo -1)
+    current_size=$(stat --format="%s" "$file" 2>>error.log || echo -1)
 
     # Calculate the SHA256 hash
     hash=$(sha256sum "$file" | awk '{print $1}')
@@ -75,7 +75,7 @@ process_file() {
 INSERT INTO file_hashes (filepath, hash, size) VALUES ('$file', '$hash', $current_size);
 EOF
         then
-            echo "psql Exit code: $? $file"
+            echo "Error: Failed to insert record for file $file. Exit code: $?"
             return
         fi
         echo "$file,$hash,$current_size,new" >> "$output_file"
@@ -101,14 +101,15 @@ EOF
     fi
 }
 
-export -f process_file
+# Initialize processed file counter
+processed_files=0
 
-# Export variables for parallel
-export db_name
-export output_file
-
-# Process files in parallel
-find "$directory" -type f | parallel --line-buffer "process_file {} '$db_name' '$output_file'" 
+# Process files sequentially
+find "$directory" -type f | while read -r file; do
+    process_file "$file" "$db_name" "$output_file"
+    ((processed_files++))
+    echo "Processed $processed_files files so far."
+done
 
 echo "SHA256 hash calculation and storage completed. Results saved to $output_file."
 
