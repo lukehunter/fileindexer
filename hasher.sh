@@ -2,7 +2,7 @@
 
 # Check if psql and parallel are installed
 if ! command -v psql &> /dev/null || ! command -v parallel &> /dev/null; then
-    echo "Error: psql and/or parallel are not installed. Please install them and try again." | tee -a error.log
+    echo "Error: psql and/or parallel are not installed. Please install them and try again." 
     exit 1
 fi
 
@@ -10,7 +10,7 @@ fi
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Usage: $0 <target_directory> <postgres_db_name> [output_file]
 
-This script calculates the SHA256 hash of all files in a specified directory, stores the hash, file path, and file size in a PostgreSQL database, and generates a report. If a file already exists in the database, it checks if the file size has changed and updates the hash if necessary. The output is saved in a CSV file." | tee -a error.log
+This script calculates the SHA256 hash of all files in a specified directory, stores the hash, file path, and file size in a PostgreSQL database, and generates a report. If a file already exists in the database, it checks if the file size has changed and updates the hash if necessary. The output is saved in a CSV file." 
     exit 1
 fi
 
@@ -23,7 +23,7 @@ if [ -n "$3" ]; then
     if [[ "$3" == /* ]] || [[ "$3" == .* ]]; then
         output_file="$3"
     else
-        echo "Error: Output file path must be absolute or relative to the current directory." | tee -a error.log
+        echo "Error: Output file path must be absolute or relative to the current directory." 
         exit 1
     fi
     output_file="$3"
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 );
 EOF
 then
-    echo "Error: Failed to create table in database $db_name." | tee -a error.log
+    echo "Error: Failed to create table in database $db_name." 
     exit 1
 fi
 
@@ -65,7 +65,7 @@ process_file() {
     # Query the database for existing entry
     result=$(psql "$db_name" -t -c "SELECT hash, size FROM file_hashes WHERE filepath = '$file';" 2>>error.log)
     if [[ $? -ne 0 ]]; then
-        echo "Error: Failed to query database for file $file. Exit code: $?" | tee -a error.log
+        echo "Error: Failed to query database for file $file. Exit code: $?"
         return
     fi
 
@@ -75,7 +75,7 @@ process_file() {
 INSERT INTO file_hashes (filepath, hash, size) VALUES ('$file', '$hash', $current_size);
 EOF
         then
-            echo "Error: Failed to insert record for file $file. Exit code: $?" | tee -a error.log
+            echo "Error: Failed to insert record for file $file. Exit code: $?"
             return
         fi
         echo "$file,$hash,$current_size,new" >> "$output_file"
@@ -90,7 +90,7 @@ EOF
 UPDATE file_hashes SET hash = '$hash', size = $current_size WHERE filepath = '$file';
 EOF
             then
-                echo "Error: Failed to update record for file $file. Exit code: $?" | tee -a error.log
+                echo "Error: Failed to update record for file $file. Exit code: $?"
                 return
             fi
             echo "$file,$hash,$current_size,changed" >> "$output_file"
