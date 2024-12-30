@@ -97,8 +97,8 @@ func main() {
 				<-sem
 				wg.Done()
 			}()
-			log.Printf("Processing: %s", path)
 			hash, size, status, err := processFile(path, db)
+			log.Printf("Path: %s Hash: %s, Size: %d, Status: %s", path, hash, size, status)
 			if err != nil {
 				log.Printf("Skipping file %s due to error: %v", path, err)
 				if writeErr := writer.Write([]string{path, "", "-1", fmt.Sprintf("error: %v", err)}); writeErr != nil {
@@ -159,25 +159,29 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 	}
 	defer file.Close()
 
-	hasher := sha256.New()
-	size, err := io.Copy(hasher, file)
+	fileInfo, err := os.Stat(path)
 	if err != nil {
-		return "", -1, "", err
+		return "", -1, "", fmt.Errorf("failed to get file info: %v", err)
 	}
-	hash := fmt.Sprintf("%x", hasher.Sum(nil))
+	fileTimestamp := fileInfo.ModTime()
+	size := fileInfo.Size()
 
-	var dbHash string
+	var hash, dbHash string
 	var dbSize int64
 	err = db.QueryRow("SELECT hash, size FROM file_hashes WHERE filepath = $1", path).Scan(&dbHash, &dbSize)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// no existing record, lets calculate the hash
+			hasher := sha256.New()
+			_, err := io.Copy(hasher, file)
+			if err != nil {
+				return "", -1, "", err
+			}
+			hash = fmt.Sprintf("%x", hasher.Sum(nil))
+
 			// Insert new record
 			for {
-				fileInfo, err := os.Stat(path)
-				if err != nil {
-					return "", -1, "", fmt.Errorf("failed to get file info: %v", err)
-				}
-				fileTimestamp := fileInfo.ModTime()
+
 				_, err = db.Exec("INSERT INTO file_hashes (filepath, hash, size, file_timestamp, hash_calculated_timestamp) VALUES ($1, $2, $3, $4, $5)", path, hash, size, fileTimestamp, time.Now())
 				if err == nil {
 					break
@@ -185,11 +189,10 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 				log.Printf("Retrying INSERT for %s due to error: %v", path, err)
 				time.Sleep(1 * time.Second)
 			}
-			if err != nil {
-				return "", -1, "", err
-			}
+
 			return hash, size, "new", nil
 		}
+		log.Printf("Error reading file %s: %v", path, err)
 		return "", -1, "", err
 	}
 
@@ -208,9 +211,7 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 			log.Printf("Retrying UPDATE for %s due to error: %v", path, err)
 			time.Sleep(1 * time.Second)
 		}
-		if err != nil {
-			return "", -1, "", err
-		}
+
 		return hash, size, "changed", nil
 	}
 
