@@ -71,10 +71,23 @@ process_file() {
 
     if [[ -z "$result" ]]; then
         # No entry in the database, insert the new record
-        if ! psql "$db_name" <<EOF
+        retry_count=0
+        max_retries=3
+        success=0
+        while [[ $retry_count -lt $max_retries ]]; do
+            if psql "$db_name" <<EOF
 INSERT INTO file_hashes (filepath, hash, size) VALUES ('$file', '$hash', $current_size);
 EOF
-        then
+            then
+                success=1
+                break
+            else
+                ((retry_count++))
+                echo "Retrying INSERT for file $file ($retry_count/$max_retries)..."
+                sleep 1
+            fi
+        done
+        if [[ $success -ne 1 ]]; then
             echo "Error: Failed to insert record for file $file. Exit code: $?"
             return
         fi
@@ -86,10 +99,23 @@ EOF
 
         if [[ "$current_size" -ne "$db_size" ]]; then
             # File size has changed, update the record
-            if ! psql "$db_name" <<EOF
+            retry_count=0
+            max_retries=3
+            success=0
+            while [[ $retry_count -lt $max_retries ]]; do
+                if psql "$db_name" <<EOF
 UPDATE file_hashes SET hash = '$hash', size = $current_size WHERE filepath = '$file';
 EOF
-            then
+                then
+                    success=1
+                    break
+                else
+                    ((retry_count++))
+                    echo "Retrying UPDATE for file $file ($retry_count/$max_retries)..."
+                    sleep 1
+                fi
+            done
+            if [[ $success -ne 1 ]]; then
                 echo "Error: Failed to update record for file $file. Exit code: $?"
                 return
             fi
