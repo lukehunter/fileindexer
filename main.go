@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS file_hashes (
     filepath TEXT NOT NULL UNIQUE,
     hash TEXT NOT NULL,
     size INTEGER NOT NULL,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    file_timestamp TIMESTAMP NOT NULL,
+    hash_calculated_timestamp TIMESTAMP NOT NULL
 );
 `
 
@@ -111,9 +112,6 @@ func main() {
 		}(path)
 		return nil
 	})
-	if !info.Mode().IsRegular() {
-		return nil
-	}
 
 	sem <- struct{}{}
 	wg.Add(1)
@@ -122,37 +120,35 @@ func main() {
 			<-sem
 			wg.Done()
 		}()
-		log.Printf("Processing: %s", path)
-		_, _, _, err := processFile(path, db)
+		hash, size, status, err := processFile(path, db)
 		if err != nil {
 			log.Printf("Skipping file %s due to error: %v", path, err)
 			if writeErr := writer.Write([]string{path, "", "-1", fmt.Sprintf("error: %v", err)}); writeErr != nil {
 				log.Printf("Failed to write error to CSV for file %s: %v", path, writeErr)
 			}
 			return
+		} else {
+			log.Printf("%s %s %d %s", path, hash, size, status)
 		}
-	}(path)
+	}(*directory)
 
-	if writeErr := writer.Write([]string{path}); writeErr != nil {
+	if writeErr := writer.Write([]string{*directory}); writeErr != nil {
 		select {
 		case errCh <- writeErr:
-			return writeErr
 		default:
 		}
 	}
-	return nil
-})
 
-if err != nil {
-log.Printf("Error walking through files: %v", err)
-}
+	if err != nil {
+		log.Printf("Error walking through files: %v", err)
+	}
 
-close(errCh)
-if len(errCh) > 0 {
-log.Printf("Error processing files: %v", <-errCh)
-}
+	close(errCh)
+	if len(errCh) > 0 {
+		log.Printf("Error processing files: %v", <-errCh)
+	}
 
-log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
+	log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
 }
 
 func processFile(path string, db *sql.DB) (string, int64, string, error) {
@@ -177,7 +173,12 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Insert new record
 			for {
-				_, err = db.Exec("INSERT INTO file_hashes (filepath, hash, size) VALUES ($1, $2, $3)", path, hash, size)
+				fileInfo, err := os.Stat(path)
+				if err != nil {
+					return "", -1, "", fmt.Errorf("failed to get file info: %v", err)
+				}
+				fileTimestamp := fileInfo.ModTime()
+				_, err = db.Exec("INSERT INTO file_hashes (filepath, hash, size, file_timestamp, hash_calculated_timestamp) VALUES ($1, $2, $3, $4, $5)", path, hash, size, fileTimestamp, time.Now())
 				if err == nil {
 					break
 				}
@@ -195,7 +196,12 @@ func processFile(path string, db *sql.DB) (string, int64, string, error) {
 	if size != dbSize {
 		// Update record
 		for {
-			_, err = db.Exec("UPDATE file_hashes SET hash = $1, size = $2 WHERE filepath = $3", hash, size, path)
+			fileInfo, err := os.Stat(path)
+			if err != nil {
+				return "", -1, "", fmt.Errorf("failed to get file info: %v", err)
+			}
+			fileTimestamp := fileInfo.ModTime()
+			_, err = db.Exec("UPDATE file_hashes SET hash = $1, size = $2, file_timestamp = $3, hash_calculated_timestamp = $4 WHERE filepath = $5", hash, size, fileTimestamp, time.Now(), path)
 			if err == nil {
 				break
 			}
