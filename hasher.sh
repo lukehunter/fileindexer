@@ -53,19 +53,17 @@ process_file() {
     db_name="$2"
     output_file="$3"
 
-    # Static progress counter
+    # Log the file being processed
     echo "Processing: $file"
 
     # Get the file size on disk
-    current_size=$(stat --format="%s" "$file" 2>>error.log || echo -1)
-
-    echo "Current size: $current_size"
+    current_size=$(stat --format="%s" "$file" 2>/dev/null || echo -1)
 
     # Calculate the SHA256 hash
     hash=$(sha256sum "$file" | awk '{print $1}')
 
     # Query the database for existing entry
-    result=$(psql "$db_name" -t -c "SELECT hash, size FROM file_hashes WHERE filepath = '$file';" 2>>error.log)
+    result=$(psql "$db_name" -t -c "SELECT hash, size FROM file_hashes WHERE filepath = '$file';" 2>/dev/null)
     if [[ $? -ne 0 ]]; then
         echo "Error: Failed to query database for file $file. Exit code: $?"
         return
@@ -86,9 +84,6 @@ EOF
         db_hash=$(echo "$result" | awk '{print $1}')
         db_size=$(echo "$result" | awk '{print $3}')
 
-        echo "result: $result"
-        echo "DB size: $db_size"
-
         if [[ "$current_size" -ne "$db_size" ]]; then
             # File size has changed, update the record
             if ! psql "$db_name" <<EOF
@@ -106,15 +101,10 @@ EOF
     fi
 }
 
-# Initialize processed file counter
-processed_files=0
+export -f process_file
 
-# Process files sequentially
-find "$directory" -type f | while read -r file; do
-    process_file "$file" "$db_name" "$output_file"
-    ((processed_files++))
-    echo "Processed $processed_files files so far."
-done
+# Process files in parallel
+find "$directory" -type f | parallel --line-buffer "process_file {} '$db_name' '$output_file'" 
 
 echo "SHA256 hash calculation and storage completed. Results saved to $output_file."
 
