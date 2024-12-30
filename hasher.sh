@@ -86,6 +86,8 @@ EOF
         db_hash=$(echo "$result" | awk '{print $1}')
         db_size=$(echo "$result" | awk '{print $2}')
 
+        echo "DB size: $db_size"
+
         if [[ "$current_size" -ne "$db_size" ]]; then
             # File size has changed, update the record
             if ! psql "$db_name" <<EOF
