@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Check if sqlite3 is installed
-if ! command -v sqlite3 &> /dev/null; then
-    echo "Error: sqlite3 is not installed. Please install it and try again."
+# Check if sqlite3 and parallel are installed
+if ! command -v sqlite3 &> /dev/null || ! command -v parallel &> /dev/null; then
+    echo "Error: sqlite3 and/or parallel are not installed. Please install them and try again."
     exit 1
 fi
 
@@ -37,9 +37,13 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 );
 EOF
 
-# Iterate over files in the directory recursively
-find "$directory" -type f | while read -r file; do
-    # Fetch the existing hash and size from the database in a single query
+# Function to process a single file
+process_file() {
+    file="$1"
+    database="$2"
+    output_file="$3"
+
+    # Fetch the existing hash and size from the database
     result=$(sqlite3 "$database" "SELECT hash, size FROM file_hashes WHERE filepath='$file';")
 
     # Get the file size on disk
@@ -51,7 +55,9 @@ find "$directory" -type f | while read -r file; do
 
         # Insert the hash, file path, and size into the database
         sqlite3 "$database" <<EOF
+BEGIN TRANSACTION;
 INSERT INTO file_hashes (filepath, hash, size) VALUES ('$file', '$hash', $current_size);
+COMMIT;
 EOF
 
         # Write to the output file
@@ -65,7 +71,9 @@ EOF
             # File size has changed, mark as "changed"
             hash=$(sha256sum "$file" | awk '{print $1}')
             sqlite3 "$database" <<EOF
+BEGIN TRANSACTION;
 UPDATE file_hashes SET hash='$hash', size=$current_size WHERE filepath='$file';
+COMMIT;
 EOF
             echo "$file,$hash,$current_size,changed" >> "$output_file"
         else
@@ -73,7 +81,16 @@ EOF
             echo "$file,$db_hash,$db_size,existing" >> "$output_file"
         fi
     fi
-done
+}
+
+export -f process_file
+
+# Export variables for parallel
+export database
+export output_file
+
+# Process files in parallel
+find "$directory" -type f | parallel process_file {} "$database" "$output_file"
 
 echo "SHA256 hash calculation and storage completed. Results saved to $output_file."
 
