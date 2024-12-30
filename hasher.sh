@@ -59,6 +59,8 @@ process_file() {
     # Get the file size on disk
     current_size=$(stat --format="%s" "$file" 2>>error.log || echo -1)
 
+    echo "Current size: $current_size"
+
     # Calculate the SHA256 hash
     hash=$(sha256sum "$file" | awk '{print $1}')
 
