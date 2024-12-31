@@ -78,7 +78,7 @@ func main() {
 		log.Fatalf("Failed to write CSV header: %v", err)
 	}
 
-	sem := make(chan struct{}, 8)
+	sem := make(chan struct{}, 1)
 	var wg sync.WaitGroup
 	excludes := strings.Split(*excludeStrings, ",")
 
