@@ -41,6 +41,7 @@ monitoring for bit-rot, make sure to hold on to / review the csv output for rows
 - code cleanup
 - analysis queries to find files that aren't backed up or have extra copies
 - exif / other metadata
+- safe deletion tool -- do not allow deletion of the only known copy of a file
 
 ## Prerequisites
 - Go 1.18 or later.
