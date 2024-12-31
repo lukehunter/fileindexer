@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/csv"
@@ -146,7 +147,7 @@ func main() {
 
 	wg.Wait()
 
-	log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
+	log.Printf("MD5 hash calculation and storage completed. Results saved to %s", *outputFile)
 }
 
 func processFile(path, storedPath string, db *sql.DB) (string, int64, string, error) {
@@ -168,7 +169,7 @@ func processFile(path, storedPath string, db *sql.DB) (string, int64, string, er
 	var dbSize int64
 	err = db.QueryRow("SELECT hash, size FROM file_hashes WHERE filepath = $1", storedPath).Scan(&dbHash, &dbSize)
 	if errors.Is(err, sql.ErrNoRows) {
-		hasher := sha256.New()
+		hasher := md5.New()
 		if _, err := io.Copy(hasher, file); err != nil {
 			return "", -1, "", fmt.Errorf("failed to hash file %s: %v", path, err)
 		}
