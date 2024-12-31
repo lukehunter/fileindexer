@@ -20,7 +20,7 @@ import (
 
 const createTableQuery = `
 CREATE TABLE IF NOT EXISTS file_hashes (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     filepath TEXT NOT NULL UNIQUE,
     hash TEXT NOT NULL,
     size BIGINT NOT NULL,
