@@ -1,13 +1,34 @@
 # File Hashing and Database Storage
 
 ## Who this is for
-If you have a bunch of hard drives to manage, some of them possibly offline, and you want to track where files exist, how many copies there are, etc. Helps to identify any files that may not be properly backed up on a backup drive, or identify when there are extra copies (either more than a primary and replica drive, or in more than one location on a drive) that can be deleted. Note that this tool relies on files having unique paths on the different drives they're stored in (file path is UNIQUE in the database schema).
+If you have a bunch of hard drives to manage, some of them possibly offline, and you want to track where files 
+exist, how many copies there are, etc. Helps to identify any files that may not be properly backed up on a backup 
+drive, or identify when there are extra copies (either more than a primary and replica drive, or in more than one 
+location on a drive) that can be deleted. Note that this tool relies on files having unique paths on the different 
+drives they're stored in (file path is UNIQUE in the database schema).
+
+## Example Usage
+In this case, I have mounted some external drives to e.g. /mnt/i and /mnt/h. The two drives have unique root folder 
+names in order to disambiguate any files that may be backups of each other. The output of the command will include 
+any new, existing, or changed files that were found, and the database will be updated with hashes of any newly 
+scanned files. Hashes are re-calculated only if the file size recorded in the database does not match. If you are 
+not expecting the indexed files to change (e.g. in the case of original photo or video archives) and are intent on 
+monitoring for bit-rot, make sure to hold on to / review the csv output for rows with "changed" in them.
+
+```sh
+./fileindexer --directory /mnt/i --dbname files --dbuser <dbuser> --dbhost <host> --dbport <port> --prefix /mnt/i 
+--exclude .bzvol,$RECYCLE.BIN
+./fileindexer --directory /mnt/h --dbname files --dbuser <dbuser> --dbhost <host> --dbport <port> --prefix /mnt/h 
+--exclude .bzvol,$RECYCLE.BIN
+```
 
 ## Overview
-This Go application calculates the SHA256 hash of files in a specified directory, stores the hash, file size, and metadata in a PostgreSQL database, and generates a CSV file summarizing the results. It is designed to handle large directories efficiently with parallel processing and robust error handling.
+This Go application calculates the SHA256 hash of files in a specified directory, stores the hash, file size, and 
+metadata in a PostgreSQL database, and generates a CSV file summarizing the results. It is designed to handle large 
+directories efficiently with parallel processing and robust error handling.
 
 ## Features
-- Calculates SHA256 hashes for all files in a directory.
+- Calculates SHA256 hashes for all files in a directory. 
 - Stores file metadata (path, size, modification time) and hash in a PostgreSQL database.
 - Supports prefix removal from file paths when storing in the database.
 - Outputs results to a CSV file with details of each file and processing status.
@@ -30,41 +51,9 @@ This Go application calculates the SHA256 hash of files in a specified directory
    go mod tidy
    ```
 
-## Usage
-Run the program with the required flags:
-
-```sh
-./file-hasher --directory <target_directory> --dbname <postgres_db_name> [--dbuser <user>] [--dbhost <host>] [--dbport <port>] [--prefix <prefix>] [--output <output_file>]
-```
-
-### Flags
-- `--directory`: The directory to scan for files (required).
-- `--dbname`: PostgreSQL database name (required).
-- `--dbuser`: PostgreSQL username (default: value of `DB_USER` environment variable).
-- `--dbhost`: PostgreSQL host (default: value of `DB_HOST` environment variable).
-- `--dbport`: PostgreSQL port (default: value of `DB_PORT` environment variable).
-- `--prefix`: A prefix to remove from file paths when storing them in the database (optional).
-- `--output`: Path to the output CSV file (default: timestamped filename in the current directory).
-
-### Example
-```sh
-./file-hasher --directory ./data --dbname filehashdb --dbuser admin --dbhost localhost --dbport 5432 --prefix /data/ --output results.csv
-```
-
 ## Output
 1. **Database**:
    - File metadata and hashes are stored in the PostgreSQL `file_hashes` table.
-   - Table schema:
-     ```sql
-     CREATE TABLE IF NOT EXISTS file_hashes (
-         id SERIAL PRIMARY KEY,
-         filepath TEXT NOT NULL UNIQUE,
-         hash TEXT NOT NULL,
-         size INTEGER NOT NULL,
-         file_timestamp TIMESTAMP NOT NULL,
-         hash_calculated_timestamp TIMESTAMP NOT NULL
-     );
-     ```
 
 2. **CSV File**:
    - Contains the following columns:
