@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ func main() {
 	dbPort := flag.String("dbport", os.Getenv("DB_PORT"), "PostgreSQL port")                                                            // Database port (default from environment variable), "PostgreSQL port")
 	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "Output CSV file") // CSV file to save results.Format("2006-01-02T15.04.05.000")), "Output CSV file")
 	prefix := flag.String("prefix", "", "Prefix to remove from the file path when storing in the database")                             // Optional prefix to remove from file paths
+	excludeStrings := flag.String("exclude", "", "Comma-separated strings; skip files containing any of these strings in their path")   // Optional strings to exclude files
 	flag.Parse()
 
 	if *directory == "" || *dbName == "" {
@@ -59,6 +61,7 @@ func main() {
 	defer db.Close()
 
 	// Create table if it doesn't exist
+	log.Printf("Creating table if it doesn't exist")
 	if _, err := db.Exec(createTableQuery); err != nil {
 		log.Fatalf("Failed to create table: %v", err)
 	}
@@ -79,10 +82,24 @@ func main() {
 	// Concurrency setup
 	sem := make(chan struct{}, 8) // Semaphore to limit concurrency to 8 workers
 	var wg sync.WaitGroup
-	errCh := make(chan error) // Channel to collect errors from goroutines
+
+	var dir string
+	if directory != nil {
+		dir = *directory
+	} else {
+		log.Fatal("directory is nil")
+	}
 
 	// Walk through files
-	err = filepath.Walk(*directory, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+		excludes := strings.Split(*excludeStrings, ",")
+		for _, exclude := range excludes {
+			if exclude != "" && strings.Contains(path, exclude) {
+				log.Printf("Skipping file %s due to exclusion string: %s", path, exclude)
+				return nil
+			}
+		}
+
 		if walkErr != nil {
 			log.Printf("Error accessing %s: %v", path, walkErr)
 			return nil
@@ -117,14 +134,15 @@ func main() {
 				log.Printf("Failed to write result to CSV for file %s: %v", path, writeErr)
 			}
 		}(path, storedPath)
+
 		return nil
 	})
+
 	if err != nil {
 		log.Printf("Error walking through files: %v", err)
 	}
 
 	wg.Wait()
-	close(errCh)
 
 	log.Printf("SHA256 hash calculation and storage completed. Results saved to %s", *outputFile)
 }
@@ -167,7 +185,11 @@ func processFile(path, storedPath string, db *sql.DB) (string, int64, string, er
 	}
 
 	if size != dbSize {
-		hash := fmt.Sprintf("%x", sha256.New().Sum(nil))
+		hasher := sha256.New()
+		if _, err := io.Copy(hasher, file); err != nil {
+			return "", -1, "", fmt.Errorf("failed to hash file %s: %v", path, err)
+		}
+		hash := fmt.Sprintf("%x", hasher.Sum(nil))
 		for {
 			_, err = db.Exec("UPDATE file_hashes SET hash = $1, size = $2, file_timestamp = $3, hash_calculated_timestamp = $4 WHERE filepath = $5", hash, size, fileTimestamp, time.Now(), storedPath)
 			if err == nil {
