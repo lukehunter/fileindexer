@@ -5,7 +5,7 @@ This Go application calculates the SHA256 hash of files in a specified directory
 metadata in a PostgreSQL database, and generates a CSV file summarizing the results. It is designed to handle large
 directories efficiently with parallel processing and robust error handling.
 
-## Who this is for
+## Why this exists
 If you have a bunch of hard drives to manage, some of them possibly offline, and you want to track where files 
 exist, how many copies there are, etc. Helps to identify any files that may not be properly backed up on a backup 
 drive, or identify when there are extra copies (either more than a primary and replica drive, or in more than one 
