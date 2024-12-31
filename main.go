@@ -29,8 +29,19 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 );
 `
 
-func main() {
-	// Main function to coordinate file hashing and database operations
+type Config struct {
+	Directory      string
+	DbName         string
+	DbUser         string
+	DbHost         string
+	DbPort         string
+	DbPassword     string
+	OutputFile     string
+	Prefix         string
+	ExcludeStrings []string
+}
+
+func parseFlags() Config {
 	directory := flag.String("directory", "", "Target directory to process")
 	dbName := flag.String("dbname", "", "PostgreSQL database name")
 	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "PostgreSQL user")
@@ -45,6 +56,19 @@ func main() {
 		log.Fatalf("Usage: --directory <target_directory> --dbname <postgres_db_name> [--dbuser <user>] [--dbhost <host>] [--dbport <port>] [--output <output_file>]")
 	}
 
+	return Config{
+		Directory:      *directory,
+		DbName:         *dbName,
+		DbUser:         *dbUser,
+		DbHost:         *dbHost,
+		DbPort:         *dbPort,
+		OutputFile:     *outputFile,
+		Prefix:         *prefix,
+		ExcludeStrings: strings.Split(*excludeStrings, ","),
+	}
+}
+
+func connectToDatabase(cfg Config) *sql.DB {
 	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
 		fmt.Print("Enter database password: ")
@@ -53,36 +77,34 @@ func main() {
 		dbPassword = inputPassword
 	}
 
-	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", *dbHost, *dbPort, *dbUser, dbPassword, *dbName)
+	connectionString := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		cfg.DbHost, cfg.DbPort, cfg.DbUser, dbPassword, cfg.DbName,
+	)
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	defer db.Close()
+	return db
+}
 
-	log.Printf("Creating table if it doesn't exist")
-	if _, err := db.Exec(createTableQuery); err != nil {
-		log.Fatalf("Failed to create table: %v", err)
-	}
-
-	file, err := os.Create(*outputFile)
+func createOutputWriter(outputFile string) (*csv.Writer, *os.File) {
+	file, err := os.Create(outputFile)
 	if err != nil {
 		log.Fatalf("Failed to create output file: %v", err)
 	}
-	defer file.Close()
 	writer := csv.NewWriter(file)
-	var writerMutex sync.Mutex
-	defer writer.Flush()
-
 	if err := writer.Write([]string{"filepath", "hash", "size", "status"}); err != nil {
 		log.Fatalf("Failed to write CSV header: %v", err)
 	}
+	return writer, file
+}
 
+func processDirectory(cfg Config, db *sql.DB, writer *csv.Writer, writerMutex *sync.Mutex) {
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
-	excludes := strings.Split(*excludeStrings, ",")
 
-	err = filepath.Walk(*directory, func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.Walk(cfg.Directory, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			log.Printf("Error accessing %s: %v", path, walkErr)
 			return nil
@@ -91,7 +113,7 @@ func main() {
 			return nil
 		}
 
-		for _, exclude := range excludes {
+		for _, exclude := range cfg.ExcludeStrings {
 			if exclude != "" && strings.Contains(path, exclude) {
 				log.Printf("Skipping file %s due to exclusion string: %s", path, exclude)
 				return nil
@@ -99,8 +121,8 @@ func main() {
 		}
 
 		storedPath := path
-		if *prefix != "" && strings.HasPrefix(path, *prefix) {
-			storedPath = path[len(*prefix):]
+		if cfg.Prefix != "" && strings.HasPrefix(path, cfg.Prefix) {
+			storedPath = path[len(cfg.Prefix):]
 		}
 
 		sem <- struct{}{}
@@ -138,8 +160,28 @@ func main() {
 	}
 
 	wg.Wait()
+}
 
-	log.Printf("MD5 hash calculation and storage completed. Results saved to %s", *outputFile)
+func main() {
+	cfg := parseFlags()
+	db := connectToDatabase(cfg)
+	defer db.Close()
+
+	log.Printf("Creating table if it doesn't exist")
+	if _, err := db.Exec(createTableQuery); err != nil {
+		log.Fatalf("Failed to create table: %v", err)
+	}
+
+	writer, outputFile := createOutputWriter(cfg.OutputFile)
+	defer func() {
+		writer.Flush()
+		outputFile.Close()
+	}()
+
+	writerMutex := &sync.Mutex{}
+	processDirectory(cfg, db, writer, writerMutex)
+
+	log.Printf("MD5 hash calculation and storage completed. Results saved to %s", cfg.OutputFile)
 }
 
 func processFile(path, storedPath string, db *sql.DB) (string, int64, string, error) {
