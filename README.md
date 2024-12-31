@@ -35,6 +35,10 @@ monitoring for bit-rot, make sure to hold on to / review the csv output for rows
 - Handles database insert/update retries for robust operation.
 - Parallel file processing with concurrency control.
 
+## TODO
+- missing file handling
+- re-hashing files which haven't been scanned in a while
+
 ## Prerequisites
 - Go 1.18 or later.
 - PostgreSQL database.
