@@ -9,7 +9,8 @@ If you have a bunch of hard drives to manage, some of them possibly offline, and
 exist, how many copies there are, etc. Helps to identify any files that may not be properly backed up on a backup 
 drive, or identify when there are extra copies (either more than a primary and replica drive, or in more than one 
 location on a drive) that can be deleted. Note that this tool relies on files having unique paths on the different 
-drives they're stored in (file path is UNIQUE in the database schema).
+drives they're stored in (file path is UNIQUE in the database schema). One suggestion is to put the files on each drive 
+under a folder named using the serial number of the hard drive.
 
 ## Example Usage
 In this case, I have mounted some external drives to e.g. /mnt/i and /mnt/h. The two drives have unique root folder 
