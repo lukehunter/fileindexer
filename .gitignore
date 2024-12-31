@@ -26,3 +26,7 @@ go.work.sum
 *.csv
 *.log
 fileindexer
+.idea/codeStyles/codeStyleConfig.xml
+index_h.sh
+index_i.sh
+index_j.sh
