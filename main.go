@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS file_hashes (
     id SERIAL PRIMARY KEY,
     filepath TEXT NOT NULL UNIQUE,
     hash TEXT NOT NULL,
-    size INTEGER NOT NULL,
+    size BIGINT NOT NULL,
     file_timestamp TIMESTAMP NOT NULL,
     hash_calculated_timestamp TIMESTAMP NOT NULL
 );
