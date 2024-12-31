@@ -38,6 +38,7 @@ monitoring for bit-rot, make sure to hold on to / review the csv output for rows
 - missing file handling
 - re-hashing files which haven't been hashed in specified time window
 - code cleanup
+- analysis queries to find files that aren't backed up or have extra copies
 
 ## Prerequisites
 - Go 1.18 or later.
