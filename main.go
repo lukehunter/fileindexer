@@ -29,19 +29,8 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 );
 `
 
-type Config struct {
-	Directory      string
-	DbName         string
-	DbUser         string
-	DbHost         string
-	DbPort         string
-	DbPassword     string
-	OutputFile     string
-	Prefix         string
-	ExcludeStrings []string
-}
-
-func parseFlags() Config {
+func main() {
+	// Main function to coordinate file hashing and database operations
 	directory := flag.String("directory", "", "Target directory to process")
 	dbName := flag.String("dbname", "", "PostgreSQL database name")
 	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "PostgreSQL user")
@@ -56,19 +45,6 @@ func parseFlags() Config {
 		log.Fatalf("Usage: --directory <target_directory> --dbname <postgres_db_name> [--dbuser <user>] [--dbhost <host>] [--dbport <port>] [--output <output_file>]")
 	}
 
-	return Config{
-		Directory:      *directory,
-		DbName:         *dbName,
-		DbUser:         *dbUser,
-		DbHost:         *dbHost,
-		DbPort:         *dbPort,
-		OutputFile:     *outputFile,
-		Prefix:         *prefix,
-		ExcludeStrings: strings.Split(*excludeStrings, ","),
-	}
-}
-
-func connectToDatabase(cfg Config) *sql.DB {
 	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
 		fmt.Print("Enter database password: ")
@@ -77,34 +53,36 @@ func connectToDatabase(cfg Config) *sql.DB {
 		dbPassword = inputPassword
 	}
 
-	connectionString := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		cfg.DbHost, cfg.DbPort, cfg.DbUser, dbPassword, cfg.DbName,
-	)
+	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", *dbHost, *dbPort, *dbUser, dbPassword, *dbName)
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	return db
-}
+	defer db.Close()
 
-func createOutputWriter(outputFile string) (*csv.Writer, *os.File) {
-	file, err := os.Create(outputFile)
+	log.Printf("Creating table if it doesn't exist")
+	if _, err := db.Exec(createTableQuery); err != nil {
+		log.Fatalf("Failed to create table: %v", err)
+	}
+
+	file, err := os.Create(*outputFile)
 	if err != nil {
 		log.Fatalf("Failed to create output file: %v", err)
 	}
+	defer file.Close()
 	writer := csv.NewWriter(file)
+	var writerMutex sync.Mutex
+	defer writer.Flush()
+
 	if err := writer.Write([]string{"filepath", "hash", "size", "status"}); err != nil {
 		log.Fatalf("Failed to write CSV header: %v", err)
 	}
-	return writer, file
-}
 
-func processDirectory(cfg Config, db *sql.DB, writer *csv.Writer, writerMutex *sync.Mutex) {
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
+	excludes := strings.Split(*excludeStrings, ",")
 
-	err := filepath.Walk(cfg.Directory, func(path string, info os.FileInfo, walkErr error) error {
+	err = filepath.Walk(*directory, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			log.Printf("Error accessing %s: %v", path, walkErr)
 			return nil
@@ -113,7 +91,7 @@ func processDirectory(cfg Config, db *sql.DB, writer *csv.Writer, writerMutex *s
 			return nil
 		}
 
-		for _, exclude := range cfg.ExcludeStrings {
+		for _, exclude := range excludes {
 			if exclude != "" && strings.Contains(path, exclude) {
 				log.Printf("Skipping file %s due to exclusion string: %s", path, exclude)
 				return nil
@@ -121,8 +99,8 @@ func processDirectory(cfg Config, db *sql.DB, writer *csv.Writer, writerMutex *s
 		}
 
 		storedPath := path
-		if cfg.Prefix != "" && strings.HasPrefix(path, cfg.Prefix) {
-			storedPath = path[len(cfg.Prefix):]
+		if *prefix != "" && strings.HasPrefix(path, *prefix) {
+			storedPath = path[len(*prefix):]
 		}
 
 		sem <- struct{}{}
@@ -160,82 +138,99 @@ func processDirectory(cfg Config, db *sql.DB, writer *csv.Writer, writerMutex *s
 	}
 
 	wg.Wait()
-}
 
-func main() {
-	cfg := parseFlags()
-	db := connectToDatabase(cfg)
-	defer db.Close()
-
-	log.Printf("Creating table if it doesn't exist")
-	if _, err := db.Exec(createTableQuery); err != nil {
-		log.Fatalf("Failed to create table: %v", err)
-	}
-
-	writer, outputFile := createOutputWriter(cfg.OutputFile)
-	defer func() {
-		writer.Flush()
-		outputFile.Close()
-	}()
-
-	writerMutex := &sync.Mutex{}
-	processDirectory(cfg, db, writer, writerMutex)
-
-	log.Printf("MD5 hash calculation and storage completed. Results saved to %s", cfg.OutputFile)
+	log.Printf("MD5 hash calculation and storage completed. Results saved to %s", *outputFile)
 }
 
 func processFile(path, storedPath string, db *sql.DB) (string, int64, string, error) {
+	// Open the file for reading
 	file, err := os.Open(path)
 	if err != nil {
 		return "", -1, "", fmt.Errorf("failed to open file %s: %v", path, err)
 	}
 	defer file.Close()
 
-	fileInfo, err := file.Stat()
+	// Retrieve file metadata
+	size, fileTimestamp, err := getFileMetadata(file)
 	if err != nil {
-		return "", -1, "", fmt.Errorf("failed to stat file %s: %v", path, err)
+		return "", -1, "", fmt.Errorf("failed to retrieve metadata for file %s: %v", path, err)
 	}
 
-	size := fileInfo.Size()
-	fileTimestamp := fileInfo.ModTime()
-
-	var dbHash string
-	var dbSize int64
-	err = db.QueryRow("SELECT hash, size FROM file_hashes WHERE filepath = $1", storedPath).Scan(&dbHash, &dbSize)
+	// Check if the file exists in the database
+	dbHash, dbSize, err := getDatabaseRecord(db, storedPath)
 	if errors.Is(err, sql.ErrNoRows) {
-		hasher := md5.New()
-		if _, err := io.Copy(hasher, file); err != nil {
+		// If no record exists, hash and insert the file
+		hash, err := hashFile(file)
+		if err != nil {
 			return "", -1, "", fmt.Errorf("failed to hash file %s: %v", path, err)
 		}
-		hash := fmt.Sprintf("%x", hasher.Sum(nil))
-		for {
-			_, err = db.Exec("INSERT INTO file_hashes (filepath, hash, size, file_timestamp, hash_calculated_timestamp) VALUES ($1, $2, $3, $4, $5)", storedPath, hash, size, fileTimestamp, time.Now())
-			if err == nil {
-				break
-			}
-			log.Printf("Retrying INSERT for %s: %v", path, err)
-			time.Sleep(1 * time.Second)
+		if err := insertFileRecord(db, storedPath, hash, size, fileTimestamp); err != nil {
+			return "", -1, "", fmt.Errorf("failed to insert record for file %s: %v", path, err)
 		}
 		return hash, size, "new", nil
 	} else if err != nil {
 		return "", -1, "", fmt.Errorf("failed to query database for %s: %v", storedPath, err)
 	}
 
+	// Update the record if the size has changed
 	if size != dbSize {
-		hasher := md5.New()
-		if _, err := io.Copy(hasher, file); err != nil {
+		hash, err := hashFile(file)
+		if err != nil {
 			return "", -1, "", fmt.Errorf("failed to hash file %s: %v", path, err)
 		}
-		hash := fmt.Sprintf("%x", hasher.Sum(nil))
-		for {
-			_, err = db.Exec("UPDATE file_hashes SET hash = $1, size = $2, file_timestamp = $3, hash_calculated_timestamp = $4 WHERE filepath = $5", hash, size, fileTimestamp, time.Now(), storedPath)
-			if err == nil {
-				break
-			}
-			log.Printf("Retrying UPDATE for %s: %v", storedPath, err)
-			time.Sleep(1 * time.Second)
+		if err := updateFileRecord(db, storedPath, hash, size, fileTimestamp); err != nil {
+			return "", -1, "", fmt.Errorf("failed to update record for file %s: %v", path, err)
 		}
 		return hash, size, "changed", nil
 	}
+
 	return dbHash, dbSize, "existing", nil
+}
+
+func getFileMetadata(file *os.File) (int64, time.Time, error) {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	return fileInfo.Size(), fileInfo.ModTime(), nil
+}
+
+func getDatabaseRecord(db *sql.DB, storedPath string) (string, int64, error) {
+	var dbHash string
+	var dbSize int64
+	err := db.QueryRow("SELECT hash, size FROM file_hashes WHERE filepath = $1", storedPath).Scan(&dbHash, &dbSize)
+	return dbHash, dbSize, err
+}
+
+func hashFile(file *os.File) (string, error) {
+	hasher := md5.New()
+	if _, err := file.Seek(0, 0); err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+}
+
+func insertFileRecord(db *sql.DB, storedPath, hash string, size int64, fileTimestamp time.Time) error {
+	for {
+		_, err := db.Exec("INSERT INTO file_hashes (filepath, hash, size, file_timestamp, hash_calculated_timestamp) VALUES ($1, $2, $3, $4, $5)", storedPath, hash, size, fileTimestamp, time.Now())
+		if err == nil {
+			return nil
+		}
+		log.Printf("Retrying INSERT for %s: %v", storedPath, err)
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func updateFileRecord(db *sql.DB, storedPath, hash string, size int64, fileTimestamp time.Time) error {
+	for {
+		_, err := db.Exec("UPDATE file_hashes SET hash = $1, size = $2, file_timestamp = $3, hash_calculated_timestamp = $4 WHERE filepath = $5", hash, size, fileTimestamp, time.Now(), storedPath)
+		if err == nil {
+			return nil
+		}
+		log.Printf("Retrying UPDATE for %s: %v", storedPath, err)
+		time.Sleep(1 * time.Second)
+	}
 }
