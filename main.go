@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/md5"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/csv"
 	"errors"
@@ -32,21 +31,21 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 
 func main() {
 	// Main function to coordinate file hashing and database operations
-	directory := flag.String("directory", "", "Target directory to process")                                                            // Directory to scan for files
-	dbName := flag.String("dbname", "", "PostgreSQL database name")                                                                     // Name of the database to connect to
-	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "PostgreSQL user")                                                            // Database user (default from environment variable), "PostgreSQL user")
-	dbHost := flag.String("dbhost", os.Getenv("DB_HOST"), "PostgreSQL host")                                                            // Database host (default from environment variable), "PostgreSQL host")
-	dbPort := flag.String("dbport", os.Getenv("DB_PORT"), "PostgreSQL port")                                                            // Database port (default from environment variable), "PostgreSQL port")
-	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "Output CSV file") // CSV file to save results.Format("2006-01-02T15.04.05.000")), "Output CSV file")
-	prefix := flag.String("prefix", "", "Prefix to remove from the file path when storing in the database")                             // Optional prefix to remove from file paths
-	excludeStrings := flag.String("exclude", "", "Comma-separated strings; skip files containing any of these strings in their path")   // Optional strings to exclude files
+	directory := flag.String("directory", "", "Target directory to process")
+	dbName := flag.String("dbname", "", "PostgreSQL database name")
+	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "PostgreSQL user")
+	dbHost := flag.String("dbhost", os.Getenv("DB_HOST"), "PostgreSQL host")
+	dbPort := flag.String("dbport", os.Getenv("DB_PORT"), "PostgreSQL port")
+	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "Output CSV file")
+	prefix := flag.String("prefix", "", "Prefix to remove from the file path when storing in the database")
+	excludeStrings := flag.String("exclude", "", "Comma-separated strings; skip files containing any of these strings in their path")
 	flag.Parse()
 
 	if *directory == "" || *dbName == "" {
 		log.Fatalf("Usage: --directory <target_directory> --dbname <postgres_db_name> [--dbuser <user>] [--dbhost <host>] [--dbport <port>] [--output <output_file>]")
 	}
 
-	dbPassword := os.Getenv("DB_PASSWORD") // Fetch database password from environment variable
+	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
 		fmt.Print("Enter database password: ")
 		var inputPassword string
@@ -54,53 +53,36 @@ func main() {
 		dbPassword = inputPassword
 	}
 
-	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", *dbHost, *dbPort, *dbUser, dbPassword, *dbName) // Build database connection string
+	connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", *dbHost, *dbPort, *dbUser, dbPassword, *dbName)
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
 
-	// Create table if it doesn't exist
 	log.Printf("Creating table if it doesn't exist")
 	if _, err := db.Exec(createTableQuery); err != nil {
 		log.Fatalf("Failed to create table: %v", err)
 	}
 
-	// Open output CSV file
 	file, err := os.Create(*outputFile)
 	if err != nil {
 		log.Fatalf("Failed to create output file: %v", err)
 	}
 	defer file.Close()
 	writer := csv.NewWriter(file)
-	defer writer.Flush() // Ensure CSV data is written to disk
+	var writerMutex sync.Mutex
+	defer writer.Flush()
 
 	if err := writer.Write([]string{"filepath", "hash", "size", "status"}); err != nil {
 		log.Fatalf("Failed to write CSV header: %v", err)
 	}
 
-	// Concurrency setup
-	sem := make(chan struct{}, 8) // Semaphore to limit concurrency to 8 workers
+	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
+	excludes := strings.Split(*excludeStrings, ",")
 
-	var dir string
-	if directory != nil {
-		dir = *directory
-	} else {
-		log.Fatal("directory is nil")
-	}
-
-	// Walk through files
-	err = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
-		excludes := strings.Split(*excludeStrings, ",")
-		for _, exclude := range excludes {
-			if exclude != "" && strings.Contains(path, exclude) {
-				log.Printf("Skipping file %s due to exclusion string: %s", path, exclude)
-				return nil
-			}
-		}
-
+	err = filepath.Walk(*directory, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			log.Printf("Error accessing %s: %v", path, walkErr)
 			return nil
@@ -109,8 +91,15 @@ func main() {
 			return nil
 		}
 
+		for _, exclude := range excludes {
+			if exclude != "" && strings.Contains(path, exclude) {
+				log.Printf("Skipping file %s due to exclusion string: %s", path, exclude)
+				return nil
+			}
+		}
+
 		storedPath := path
-		if *prefix != "" && len(path) > len(*prefix) && path[:len(*prefix)] == *prefix {
+		if *prefix != "" && strings.HasPrefix(path, *prefix) {
 			storedPath = path[len(*prefix):]
 		}
 
@@ -123,21 +112,24 @@ func main() {
 			}()
 
 			hash, size, status, err := processFile(path, storedPath, db)
+			writerMutex.Lock()
+			defer writerMutex.Unlock()
+
 			if err != nil {
-				log.Printf("Skipping file %s due to error: %v", path, err) // Log error for the file but continue processing other files
+				log.Printf("Skipping file %s due to error: %v", path, err)
 				if writeErr := writer.Write([]string{storedPath, "", "-1", fmt.Sprintf("error: %v", err)}); writeErr != nil {
 					log.Printf("Failed to write error to CSV for file %s: %v", path, writeErr)
 				}
+				writer.Flush()
 				return
 			}
+
 			log.Printf("Path: %s Hash: %s, Size: %d, Status: %s", path, hash, size, status)
 			if writeErr := writer.Write([]string{storedPath, hash, fmt.Sprintf("%d", size), status}); writeErr != nil {
 				log.Printf("Failed to write result to CSV for file %s: %v", path, writeErr)
 			}
-
 			writer.Flush()
 		}(path, storedPath)
-
 		return nil
 	})
 
@@ -188,7 +180,7 @@ func processFile(path, storedPath string, db *sql.DB) (string, int64, string, er
 	}
 
 	if size != dbSize {
-		hasher := sha256.New()
+		hasher := md5.New()
 		if _, err := io.Copy(hasher, file); err != nil {
 			return "", -1, "", fmt.Errorf("failed to hash file %s: %v", path, err)
 		}
