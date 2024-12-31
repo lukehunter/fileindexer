@@ -112,6 +112,7 @@ func main() {
 				}
 				return
 			}
+			log.Printf("Path: %s Hash: %s, Size: %d, Status: %s", path, hash, size, status)
 			if writeErr := writer.Write([]string{storedPath, hash, fmt.Sprintf("%d", size), status}); writeErr != nil {
 				log.Printf("Failed to write result to CSV for file %s: %v", path, writeErr)
 			}
