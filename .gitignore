@@ -32,3 +32,5 @@ index_i.sh
 index_j.sh
 index_d.sh
 index_e.sh
+.idea/dataSources.xml
+.idea/sqldialects.xml
