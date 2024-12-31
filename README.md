@@ -1,9 +1,8 @@
 # File Hashing and Database Storage
 
 ## Overview
-This Go application calculates the SHA256 hash of files in a specified directory, stores the hash, file size, and
-metadata in a PostgreSQL database, and generates a CSV file summarizing the results. It is designed to handle large
-directories efficiently with parallel processing and robust error handling.
+This Go application calculates the hashes of files in the specified directory, stores the hash, file size, and
+other metadata in a PostgreSQL database, and generates a CSV file summarizing the results. 
 
 ## Why this exists
 If you have a bunch of hard drives to manage, some of them possibly offline, and you want to track where files 
@@ -37,7 +36,7 @@ monitoring for bit-rot, make sure to hold on to / review the csv output for rows
 
 ## TODO
 - missing file handling
-- re-hashing files which haven't been scanned in a while
+- re-hashing files which haven't been hashed in specified time window
 
 ## Prerequisites
 - Go 1.18 or later.
