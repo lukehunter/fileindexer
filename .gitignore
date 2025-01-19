@@ -34,3 +34,4 @@ index_d.sh
 index_e.sh
 .idea/dataSources.xml
 .idea/sqldialects.xml
+.venv
