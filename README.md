@@ -42,6 +42,10 @@ monitoring for bit-rot, make sure to hold on to / review the csv output for rows
 - analysis queries to find files that aren't backed up or have extra copies
 - exif / other metadata
 - safe deletion tool -- do not allow deletion of the only known copy of a file
+- strong deletion tool -- specify a folder to remove, remove any copies as well (mark files in db? to handle offline)
+  - report any remaining copies of files we're trying to remove
+- pause without cancelling
+- read a results file as input, skip already processed
 
 ## Prerequisites
 - Go 1.18 or later.

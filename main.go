@@ -42,18 +42,32 @@ type Config struct {
 }
 
 func parseFlags() Config {
-	directory := flag.String("directory", "", "Target directory to process")
-	dbName := flag.String("dbname", "", "PostgreSQL database name")
-	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "PostgreSQL user")
-	dbHost := flag.String("dbhost", os.Getenv("DB_HOST"), "PostgreSQL host")
-	dbPort := flag.String("dbport", os.Getenv("DB_PORT"), "PostgreSQL port")
-	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "Output CSV file")
-	prefix := flag.String("prefix", "", "Prefix to remove from the file path when storing in the database")
-	excludeStrings := flag.String("exclude", "", "Comma-separated strings; skip files containing any of these strings in their path")
+	directory := flag.String("directory", "", "The target directory containing files to process for MD5 hash calculation. Required.")
+	dbName := flag.String("dbname", "", "The name of the PostgreSQL database to store file hashes. Required.")
+	dbUser := flag.String("dbuser", os.Getenv("DB_USER"), "The PostgreSQL username. Defaults to the DB_USER environment variable.")
+	dbHost := flag.String("dbhost", os.Getenv("DB_HOST"), "The PostgreSQL host. Defaults to the DB_HOST environment variable.")
+	dbPort := flag.String("dbport", os.Getenv("DB_PORT"), "The PostgreSQL port. Defaults to the DB_PORT environment variable.")
+	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "The path to the CSV file to output processing results. Defaults to a timestamped file in the current directory.")
+	prefix := flag.String("prefix", "", "Optional prefix to remove from file paths when storing them in the database.")
+	excludeStrings := flag.String("exclude", "", "Comma-separated list of strings. Skip processing files containing any of these strings in their path.")
 	flag.Parse()
 
 	if *directory == "" || *dbName == "" {
-		log.Fatalf("Usage: --directory <target_directory> --dbname <postgres_db_name> [--dbuser <user>] [--dbhost <host>] [--dbport <port>] [--output <output_file>]")
+		log.Fatalf(`Usage: <command> --directory <target_directory> --dbname <postgres_db_name> [options]
+
+This command scans a directory for files, computes their MD5 hashes, stores the hashes and metadata in a PostgreSQL database, and outputs a CSV summary.
+
+Required Flags:
+  --directory: The target directory to process.
+  --dbname: The name of the PostgreSQL database.
+
+Optional Flags:
+  --dbuser: PostgreSQL username (default: DB_USER environment variable).
+  --dbhost: PostgreSQL host (default: DB_HOST environment variable).
+  --dbport: PostgreSQL port (default: DB_PORT environment variable).
+  --output: Output CSV file path (default: timestamped file in the current directory).
+  --prefix: Prefix to remove from file paths in the database.
+  --exclude: Comma-separated strings to exclude certain file paths.`)
 	}
 
 	return Config{
