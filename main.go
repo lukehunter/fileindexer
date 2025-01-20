@@ -39,6 +39,7 @@ type Config struct {
 	OutputFile     string
 	Prefix         string
 	ExcludeStrings []string
+	Force          bool
 }
 
 func parseFlags() Config {
@@ -50,6 +51,7 @@ func parseFlags() Config {
 	outputFile := flag.String("output", fmt.Sprintf("%s_results.csv", time.Now().Format("2006-01-02T15.04.05.000")), "The path to the CSV file to output processing results. Defaults to a timestamped file in the current directory.")
 	prefix := flag.String("prefix", "", "Optional prefix to remove from file paths when storing them in the database.")
 	excludeStrings := flag.String("exclude", "", "Comma-separated list of strings. Skip processing files containing any of these strings in their path.")
+	force := flag.Bool("force", false, "Force re-calculating the hash for all files.")
 	flag.Parse()
 
 	if *directory == "" || *dbName == "" {
@@ -79,6 +81,7 @@ Optional Flags:
 		OutputFile:     *outputFile,
 		Prefix:         *prefix,
 		ExcludeStrings: strings.Split(*excludeStrings, ","),
+		Force:          *force,
 	}
 }
 
@@ -147,7 +150,7 @@ func processDirectory(cfg Config, db *sql.DB, writer *csv.Writer, writerMutex *s
 				wg.Done()
 			}()
 
-			hash, size, status, err := processFile(path, storedPath, db)
+			hash, size, status, err := processFile(path, storedPath, db, cfg.Force)
 			writerMutex.Lock()
 			defer writerMutex.Unlock()
 
@@ -198,7 +201,7 @@ func main() {
 	log.Printf("MD5 hash calculation and storage completed. Results saved to %s", cfg.OutputFile)
 }
 
-func processFile(path, storedPath string, db *sql.DB) (string, int64, string, error) {
+func processFile(path, storedPath string, db *sql.DB, force bool) (string, int64, string, error) {
 	// Open the file for reading
 	file, err := os.Open(path)
 	if err != nil {
@@ -210,6 +213,17 @@ func processFile(path, storedPath string, db *sql.DB) (string, int64, string, er
 	size, fileTimestamp, err := getFileMetadata(file)
 	if err != nil {
 		return "", -1, "", fmt.Errorf("failed to retrieve metadata for file %s: %v", path, err)
+	}
+
+	if force {
+		hash, err := hashFile(file)
+		if err != nil {
+			return "", -1, "", fmt.Errorf("failed to hash file %s: %v", path, err)
+		}
+		if err := updateFileRecord(db, storedPath, hash, size, fileTimestamp); err != nil {
+			return "", -1, "", fmt.Errorf("failed to update record for file %s: %v", path, err)
+		}
+		return hash, size, "forced", nil
 	}
 
 	// Check if the file exists in the database
