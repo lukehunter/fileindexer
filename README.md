@@ -9,7 +9,8 @@ If you have a bunch of hard drives to manage, some of them possibly offline, and
 exist, how many copies there are, etc. Helps to identify any files that may not be properly backed up on a backup 
 drive, or identify when there are extra copies (either more than a primary and replica drive, or in more than one 
 location on a drive) that can be deleted. Note that this tool relies on files having unique paths on the different 
-drives they're stored in (file path is UNIQUE in the database schema).
+drives they're stored in (file path is UNIQUE in the database schema). One suggestion is to put the files on each drive 
+under a folder named using the serial number of the hard drive.
 
 ## Example Usage
 In this case, I have mounted some external drives to e.g. /mnt/i and /mnt/h. The two drives have unique root folder 
@@ -37,6 +38,14 @@ monitoring for bit-rot, make sure to hold on to / review the csv output for rows
 ## TODO
 - missing file handling
 - re-hashing files which haven't been hashed in specified time window
+- code cleanup
+- analysis queries to find files that aren't backed up or have extra copies
+- exif / other metadata
+- safe deletion tool -- do not allow deletion of the only known copy of a file
+- strong deletion tool -- specify a folder to remove, remove any copies as well (mark files in db? to handle offline)
+  - report any remaining copies of files we're trying to remove
+- pause without cancelling
+- read a results file as input, skip already processed
 
 ## Prerequisites
 - Go 1.18 or later.
